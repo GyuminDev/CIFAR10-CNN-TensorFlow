@@ -10,9 +10,9 @@ import os
 import matplotlib.pyplot as plt
 
 # data directory
-input = os.getcwd() + "/data/temp"
-output = os.getcwd() + "/data/data_batch_4.bin"
-imageSize = 32
+input = os.getcwd() + "/data/test"
+output = os.getcwd() + "/data/test_batch.bin"
+imageSize = 128
 imageDepth = 3
 debugEncodedImage = False
 
@@ -56,7 +56,7 @@ except OSError:
     pass
 
 outputFile = open(output, "ab")
-label = 2
+label = -1
 totalImageCount = 0
 labelMap = []
 

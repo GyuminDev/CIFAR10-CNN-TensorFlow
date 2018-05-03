@@ -2,6 +2,7 @@ import tensorflow as tf
 
 FLAGS = tf.app.flags.FLAGS
 
+
 def _variable_on_cpu(name, shape, initializer):
     """cpu 메모리에 변수를 선언하고 return.
     Args:
@@ -35,71 +36,61 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
     var = _variable_on_cpu(
         name,
         shape,
-        tf.truncated_normal_initializer(stddev=stddev, dtype=dtype))
+        # tf.truncated_normal_initializer(stddev=stddev, dtype=dtype)
+        tf.contrib.layers.xavier_initializer())
     if wd is not None:
         weight_decay = tf.multiply(tf.nn.l2_loss(var), wd, name='weight_loss')
         tf.add_to_collection('losses', weight_decay)
 
     return var
 
-def hypothesis(images):
+
+def BatchNorm(inputT, is_training=True, scope=None):
+    # Note: is_training is tf.placeholder(tf.bool) type
+    return tf.cond(is_training,
+                   lambda: tf.contrib.layers.batch_norm(inputT, is_training=True, center=True,
+                                                        updates_collections=None, scope=scope,
+                                                        decay=0.9, zero_debias_moving_mean=True, reuse=None),
+                   lambda: tf.contrib.layers.batch_norm(inputT, is_training=False, center=True,
+                                                        updates_collections=None, scope=scope,
+                                                        decay=0.9, zero_debias_moving_mean=True, reuse=True))
+
+
+def hypothesis(images, is_training):
     '''
     Conv1 - relu - pool - norm
     Conv2 - relu - norm - pool
     Conv3 - relu - norm
     Conv4 - relu - norm - pool
     2개의 F.C Layer - hypothesis
-    norm은 tf.nn.lrn()을 사용하여 local response normalization을 진행한다.
-    형성된 Filter의 수를 사용해서 filter 간에 정규화를 의미하는 것,
+
     :param images: input image matrix, shape = [batch_size, width, height, 3]
     :return: hypothesis 결과, shape = [batch_size, class_num]
     '''
 
     with tf.variable_scope('conv1') as scope:
-        # 3x3 크기, 3개의 색상(RGB)의 필터를 64개 선언.
         kernel = _variable_with_weight_decay('weights',
                                              shape=[FLAGS.conv1_filter_size, FLAGS.conv1_filter_size,
                                                     FLAGS.depth, FLAGS.conv1_filter_num],
                                              stddev=5e-2,
                                              wd=0.0)
-        # input image shape = [batch_size, width, height, depth]
         conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
-        biases = _variable_on_cpu('biases', [FLAGS.conv1_filter_num], tf.constant_initializer(0.0))
-        conv1 = tf.nn.relu(tf.nn.bias_add(conv, biases), name=scope.name)
+        batch_norm1 = BatchNorm(inputT=conv, is_training=is_training, scope='batch_norm')
+        conv1 = tf.nn.relu(batch_norm1, name=scope.name)
 
-        # variable_summaries(conv1)
-        w1_hist = tf.summary.histogram("conv1_W", kernel)
-        b1_hist = tf.summary.histogram("conv1_biases", biases)
+    pool1 = tf.nn.max_pool(conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool1')
 
-    # pool1
-    # padding 옵션 SAME
-    pool1 = tf.nn.max_pool(conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
-                           padding='SAME', name='pool1')
-    # norm1
-    # local_response_normalization 진행(64개의 filter를 정규화하는 의미)
-    norm1 = tf.nn.local_response_normalization(pool1, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-                      name='norm1')
-    # conv2
     with tf.variable_scope('conv2') as scope:
         kernel = _variable_with_weight_decay('weights',
                                              shape=[FLAGS.conv2_filter_size, FLAGS.conv2_filter_size,
                                                     FLAGS.conv1_filter_num, FLAGS.conv2_filter_num],
                                              stddev=5e-2,
                                              wd=0.0)
-        conv = tf.nn.conv2d(norm1, kernel, [1, 1, 1, 1], padding='SAME')
-        biases = _variable_on_cpu('biases', [FLAGS.conv2_filter_num], tf.constant_initializer(0.1))
-        conv2 = tf.nn.relu(tf.nn.bias_add(conv, biases), name=scope.name)
+        conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], padding='SAME')
+        batch_norm2 = BatchNorm(inputT=conv, is_training=is_training, scope='batch_norm')
+        conv2 = tf.nn.relu(batch_norm2, name=scope.name)
 
-        # variable_summaries(conv2)
-        w2_hist = tf.summary.histogram("conv2_W", kernel)
-        b2_hist = tf.summary.histogram("conv2_biases", biases)
-
-    # norm2
-    norm2 = tf.nn.local_response_normalization(conv2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-                      name='norm2')
-    # pool2
-    pool2 = tf.nn.max_pool(norm2, ksize=[1, 2, 2, 1],
-                           strides=[1, 2, 2, 1], padding='SAME', name='pool2')
+    pool2 = tf.nn.max_pool(conv2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool2')
 
     # conv3
     with tf.variable_scope('conv3') as scope:
@@ -110,20 +101,10 @@ def hypothesis(images):
                                              wd=0.0)
 
         conv = tf.nn.conv2d(pool2, kernel, [1, 1, 1, 1], padding='SAME')
-        biases = _variable_on_cpu('biases', [FLAGS.conv3_filter_num], tf.constant_initializer(0.1))
-        conv3 = tf.nn.relu(tf.nn.bias_add(conv, biases), name=scope.name)
+        batch_norm3 = BatchNorm(inputT=conv, is_training=is_training, scope='batch_norm')
+        conv3 = tf.nn.relu(batch_norm3, name=scope.name)
 
-        # variable_summaries(conv2)
-        w3_hist = tf.summary.histogram("conv3_W", kernel)
-        b3_hist = tf.summary.histogram("conv3_biases", biases)
-
-    # norm3
-    norm3 = tf.nn.local_response_normalization(conv3, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-                      name='norm3')
-    # pool3
-    # pool3 shape = [128, 32, 32, 64]
-    pool3 = tf.nn.max_pool(norm3, ksize=[1, 2, 2, 1],
-                           strides=[1, 2, 2, 1], padding='SAME', name='pool3')
+    pool3 = tf.nn.max_pool(conv3, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool3')
 
     # conv4
     with tf.variable_scope('conv4') as scope:
@@ -132,50 +113,48 @@ def hypothesis(images):
                                                     FLAGS.conv3_filter_num, FLAGS.conv4_filter_num],
                                              stddev=5e-2,
                                              wd=0.0)
-        # conv shape = [128, 64, 64, 64]
+
         conv = tf.nn.conv2d(pool3, kernel, [1, 1, 1, 1], padding='SAME')
-        biases = _variable_on_cpu('biases', [FLAGS.conv4_filter_num], tf.constant_initializer(0.1))
-        conv4 = tf.nn.relu(tf.nn.bias_add(conv, biases), name=scope.name)
+        batch_norm4 = BatchNorm(inputT=conv, is_training=is_training, scope='batch_norm')
+        conv4 = tf.nn.relu(batch_norm4, name=scope.name)
 
-        # variable_summaries(conv2)
-        w4_hist = tf.summary.histogram("conv3_W", kernel)
-        b4_hist = tf.summary.histogram("conv3_biases", biases)
+    pool4 = tf.nn.max_pool(conv4, ksize=[1, 2, 2, 1],
+                           strides=[1, 2, 2, 1], padding='SAME', name='pool4')  # 1, 8, 8, 256
 
-    # norm3
-    norm4 = tf.nn.lrn(conv4, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-                      name='norm3')
-    # pool3
-    pool4 = tf.nn.max_pool(norm4, ksize=[1, 2, 2, 1],
-                           strides=[1, 2, 2, 1], padding='SAME', name='pool3')
+    with tf.variable_scope('conv5') as scope:
+        kernel = _variable_with_weight_decay('weights',
+                                             shape=[FLAGS.conv5_filter_size, FLAGS.conv5_filter_size,
+                                                    FLAGS.conv4_filter_num, FLAGS.conv5_filter_num],
+                                             stddev=5e-2,
+                                             wd=0.0)
+
+        conv = tf.nn.conv2d(pool4, kernel, [1, 1, 1, 1], padding='SAME')
+        batch_norm5 = BatchNorm(inputT=conv, is_training=is_training, scope='batch_norm')
+        conv5 = tf.nn.relu(batch_norm5, name=scope.name)
+
+    # global average pooling
+    with tf.variable_scope('global_average_pooling') as scope:
+        filter_size = conv5.get_shape()[1].value
+        gap = tf.nn.avg_pool(conv5, ksize=[1, filter_size, filter_size, 1],
+                             strides=[1, filter_size, filter_size, 1], padding='VALID')
 
     # local3
     with tf.variable_scope('local1') as scope:
-        # Move everything into depth so we can perform a single matrix multiply.
-        # reshape = tf.reshape(pool2, [FLAGS.batch_size, -1]) # reshape = [128, 6*6*64]
-        # dim = reshape.get_shape()[1].value # 2304
+        # dim = reshape.get_shape()[1].value
         dim = 1
-        for d in pool4.get_shape()[1:].as_list():
+        for d in gap.get_shape()[1:].as_list():
             dim *= d
-        reshape = tf.reshape(pool4, [-1, dim])
-        weights = _variable_with_weight_decay('weights', shape=[dim, 512],
-                                              stddev=0.04, wd=0.004)
-        biases = _variable_on_cpu('biases', [512], tf.constant_initializer(0.1))
-        local1 = tf.nn.relu(tf.matmul(reshape, weights) + biases, name=scope.name)
 
-        # variable_summaries(local3)
-        w5_hist = tf.summary.histogram("local3_W", weights)
-        b5_hist = tf.summary.histogram("local3_biases", biases)
-
-    with tf.variable_scope('hypothesis') as scope:
-        weights = _variable_with_weight_decay('weights', [512, FLAGS.num_class], stddev=1 / 192.0, wd=0.0)
-        biases = _variable_on_cpu('biases', [FLAGS.num_class], tf.constant_initializer(0.0))
-        hypothesis = tf.add(tf.matmul(local1, weights), biases, name="logits")
-
-        w6_hist = tf.summary.histogram("W", weights)
-        b6_hist = tf.summary.histogram("biases", biases)
-        tf.summary.histogram('hypothesis', hypothesis)
+        reshape = tf.reshape(gap, [-1, dim])
+        weights = _variable_with_weight_decay('weights', shape=[dim, FLAGS.num_class],
+                                              stddev=0.04, wd=0.0001)
+        biases = _variable_on_cpu('biases', [FLAGS.num_class], tf.constant_initializer(0.1))
+        hypothesis = tf.add(tf.matmul(reshape, weights), biases, name="logits")
 
     output = tf.nn.softmax(hypothesis, name=FLAGS.output_node_name)
+
+    tf.summary.histogram('hypothesis', hypothesis)
+    tf.summary.histogram('output', output)
 
     return hypothesis, output
 
@@ -187,24 +166,12 @@ def cost(hypothesis, labels):
     :return: croos-entropy(오차<cost>)
     '''
     with tf.variable_scope('loss') as scope:
-        # labels = tf.cast(labels, tf.int32)
         cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(
             logits=hypothesis, labels=labels, name='loss'))
         tf.summary.scalar("loss", cross_entropy)
         tf.add_to_collection('loss', cross_entropy)
 
     return cross_entropy
-
-
-def optimizer(cross_entropy):
-    '''
-    :param cross_entropy: cross-Entropy를 이용해 계산된 오차<cost>
-    :return: AdamOptimizer를 이용하여 train을 진행
-    '''
-    with tf.variable_scope('optimizer') as scope:
-        optimizer = tf.train.AdamOptimizer(FLAGS.learning_rate, name='optimizer').minimize(cross_entropy)
-
-    return optimizer
 
 
 def accuracy(output, labels):

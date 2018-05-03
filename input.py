@@ -103,8 +103,8 @@ def distorted_inputs(data_dir, batch_size):
     # random하게 자른 후 좌우 반전, 밝기 조절, 대비 조절을 랜덤하게 적용 후
     # 이렇게 왜곡을 주어서 데이터 세트의 크기를 키운다. 그리고 화이트닝을 적용한다.(모델이 둔감해 지도록)
     # Overfitting을 방지
-    distorted_image = tf.random_crop(reshaped_image, [FLAGS.height, FLAGS.width, FLAGS.depth])
-    distorted_image = tf.image.random_flip_left_right(distorted_image)
+    # distorted_image = tf.random_crop(reshaped_image, [FLAGS.height, FLAGS.width, FLAGS.depth])
+    distorted_image = tf.image.random_flip_left_right(reshaped_image)
     distorted_image = tf.image.random_brightness(distorted_image, max_delta=63)
     distorted_image = tf.image.random_contrast(distorted_image, lower=0.2, upper=1.8)
     float_image = tf.image.per_image_standardization(distorted_image)
@@ -124,7 +124,7 @@ def inputs(data_dir, batch_size):
     :param batch_size:
     :return:
     '''
-    filenames = [os.path.join(data_dir, 'test.bin')]
+    filenames = [os.path.join(data_dir, 'test_batch.bin')]
     # filenames = [os.path.join(data_dir, 'test_batch.bin')]
     for f in filenames:
         if not tf.gfile.Exists(f):
@@ -133,8 +133,8 @@ def inputs(data_dir, batch_size):
     image, label = read_raw_images(filenames)
     reshaped_image = tf.cast(image, tf.float32)
 
-    resized_image = tf.image.resize_image_with_crop_or_pad(reshaped_image, FLAGS.height, FLAGS.width)
-    float_image = tf.image.per_image_standardization(resized_image)
+    # resized_image = tf.image.resize_image_with_crop_or_pad(reshaped_image, FLAGS.height, FLAGS.width)
+    float_image = tf.image.per_image_standardization(reshaped_image)
 
     min_fraction_of_examples_in_queue = 0.4
     min_queue_examples = int(FLAGS.test_image_num *
